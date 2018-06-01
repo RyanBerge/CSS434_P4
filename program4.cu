@@ -1,24 +1,31 @@
 #include <cuda.h>
 #include <cuda_runtime_api.h>
 #include <stdio.h>
-#include <chrono>
 #include <random>
+#include <cstdint>
 
-void fill_matrix(double* matrix, int n);
-void print_matrix(double* matrix, int n);
+void fill_matrix(float* matrix, uint64_t n);
+void print_matrix(float* matrix, uint64_t n);
 
 // Uses 1 block with a 1D dimension; assumes total number of threads = N
 // Has 2xNxNxN total floating-point operations
-__global__ void gpu_basic_mm(double* matrix1, double* matrix2, double* result, int n)
+__global__ void gpu_basic_mm(float* matrix1, float* matrix2, float* result, uint64_t n)
 {
     // Divide threads into indices (assuming 1D blocks)
-    //int num_threads = gridDim.x * blockDim.x;
+    //uint64_t num_threads = gridDim.x * blockDim.x;
     int thread_index = threadIdx.x + blockIdx.x * blockDim.x;
+
+    for (int i = 0; i < n*n; ++i)
+    {
+        float val = matrix1[i];
+    }
+
+    printf("hey\n");
 
     // Assume num threads = n
     for (int row = 0; row < n; ++row)
     {
-        double sum = 0;
+        float sum = 0;
         for (int item = 0; item < n; ++item)
         {
             sum += matrix1[row * n + item] * matrix2[item * n + thread_index];
@@ -30,18 +37,18 @@ __global__ void gpu_basic_mm(double* matrix1, double* matrix2, double* result, i
 int main()
 {
     // Size of matrices
-    int n = 1024;
+    uint64_t n = 1024;
 
-    double* m1 = new double[n * n];
-    double* m2 = new double[n * n];
-    double* result = new double[n * n];
+    float* m1 = new float[n * n];
+    float* m2 = new float[n * n];
+    float* result = new float[n * n];
 
-    double* g_m1;
-    double* g_m2;
-    double* g_result;
-    cudaMalloc((void**)&g_m1, n * n * sizeof(double));
-    cudaMalloc((void**)&g_m2, n * n * sizeof(double));
-    cudaMalloc((void**)&g_result, n * n * sizeof(double));
+    float* g_m1;
+    float* g_m2;
+    float* g_result;
+    cudaMalloc((void**)&g_m1, n * n * sizeof(float));
+    cudaMalloc((void**)&g_m2, n * n * sizeof(float));
+    cudaMalloc((void**)&g_result, n * n * sizeof(float));
 
     fill_matrix(m1, n);
     fill_matrix(m2, n);
@@ -49,8 +56,7 @@ int main()
     cudaError_t code = cudaPeekAtLastError();
     if (code != cudaSuccess)
     {
-        printf("asd\n");
-        printf("An error occurred: %s\n", cudaGetErrorString(code));
+        printf("Allocation Error: %s\n", cudaGetErrorString(code));
     }
 
     //printf("-----m1-----\n");
@@ -63,23 +69,35 @@ int main()
     // Timer start including memcpy operations
     //auto start = std::chrono::system_clock::now();
 
-    cudaMemcpy(g_m1, m1, n * n * sizeof(double), cudaMemcpyHostToDevice);
-    cudaMemcpy(g_m2, m2, n * n * sizeof(double), cudaMemcpyHostToDevice);
+    cudaMemcpy(g_m1, m1, n * n * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(g_m2, m2, n * n * sizeof(float), cudaMemcpyHostToDevice);
+
+    code = cudaPeekAtLastError();
+    if (code != cudaSuccess)
+    {
+        printf("Memcpy Error: %s\n", cudaGetErrorString(code));
+    }
 
     // Timer start excluding memcpy operations
     clock_t start = clock();
 
     // has 2xnxnxn total floating-point operations
-    gpu_basic_mm<<<32, 32>>>(g_m1, g_m2, g_result, n);
+    gpu_basic_mm<<<4, 1024>>>(g_m1, g_m2, g_result, n);
     cudaThreadSynchronize();
 
     // Timer end excluding memcpy operations
-    double elapsed_seconds = (double)(clock() - start) / CLOCKS_PER_SEC;
+    float elapsed_seconds = (float)(clock() - start) / CLOCKS_PER_SEC;
 
-    cudaMemcpy(result, g_result, n * n * sizeof(double), cudaMemcpyDeviceToHost);
+    code = cudaPeekAtLastError();
+    if (code != cudaSuccess)
+    {
+        printf("Kernel Error: %s\n", cudaGetErrorString(code));
+    }
+
+    cudaMemcpy(result, g_result, n * n * sizeof(float), cudaMemcpyDeviceToHost);
 
     // Timer end including memcpy operations
-    //double elapsed_seconds = (std::chrono::system_clock::now() - start).count();
+    //float elapsed_seconds = (std::chrono::system_clock::now() - start).count();
 
 
     //printf("-----result-----\n");
@@ -88,15 +106,13 @@ int main()
     code = cudaPeekAtLastError();
     if (code != cudaSuccess)
     {
-        printf("An error occurred: %s\n", cudaGetErrorString(code));
+        printf("Memcpy Error 2: %s\n", cudaGetErrorString(code));
     }
 
-    long operations = n;
-    operations = 2 * operations * operations * operations;
-    double flops = operations / elapsed_seconds;
-    printf("Operations: %d\n", operations);
+    float flops = (2 * n * n * n) / elapsed_seconds;
+    printf("Operations: %lld\n", (2 * n * n * n));
     printf("Seconds: %f\n", elapsed_seconds);
-    printf("FLOPS for gpu_basic_mm() at size %d matrices = %f", n, flops);
+    printf("FLOPS for gpu_basic_mm() at size %lld matrices = %f", n, flops);
 
 
     cudaFree(m1);
@@ -109,9 +125,9 @@ int main()
 
 }
 
-void fill_matrix(double* matrix, int n)
+void fill_matrix(float* matrix, uint64_t n)
 {
-    std::uniform_real_distribution<double> distribution(2, 100);
+    std::uniform_real_distribution<float> distribution(2, 100);
     std::default_random_engine generator;
 
     for (int i = 0; i < n; i++)
@@ -123,7 +139,7 @@ void fill_matrix(double* matrix, int n)
     }
 }
 
-void print_matrix(double* matrix, int n)
+void print_matrix(float* matrix, uint64_t n)
 {
     for (int i = 0; i < n; i++)
     {
