@@ -3,6 +3,10 @@
 #include <stdio.h>
 #include <random>
 #include <cstdint>
+#include <iostream>
+#include <cstring>
+
+#define MATRIX_SIZE 1024
 
 void fill_matrix(float* matrix, uint64_t n);
 void print_matrix(float* matrix, uint64_t n);
@@ -12,15 +16,8 @@ void print_matrix(float* matrix, uint64_t n);
 __global__ void gpu_basic_mm(float* matrix1, float* matrix2, float* result, uint64_t n)
 {
     // Divide threads into indices (assuming 1D blocks)
-    //uint64_t num_threads = gridDim.x * blockDim.x;
+    //int num_threads = gridDim.x * blockDim.x;
     int thread_index = threadIdx.x + blockIdx.x * blockDim.x;
-
-    for (int i = 0; i < n*n; ++i)
-    {
-        float val = matrix1[i];
-    }
-
-    printf("hey\n");
 
     // Assume num threads = n
     for (int row = 0; row < n; ++row)
@@ -34,10 +31,60 @@ __global__ void gpu_basic_mm(float* matrix1, float* matrix2, float* result, uint
     }
 }
 
+// Assumes blockDim = NxA and threadDim = B where A * B = N
+// Has 2xNxNxN total floating-point operations
+__global__ void gpu_better_mm(float* matrix1, float* matrix2, float* result, uint64_t n)
+{
+    int row = blockIdx.x;
+    int column = blockIdx.y * blockDim.y + threadIdx.x;
+
+    // Assume num threads = n * n
+    float sum = 0;
+    for (int item = 0; item < n; ++item)
+    {
+        sum += matrix1[row * n + item] * matrix2[item * n + column];
+    }
+    result[column * n + row] = sum;
+}
+
+__global__ void gpu_better_transpose_mm(float* matrix1, float* matrix2, float* result, uint64_t n)
+{
+    // int r = blockIdx.x;
+    // if (threadIdx.x == 0 && blockIdx.y == 0)
+    // {
+    //     // Transpose the second matrix
+    //     int start = 1;
+
+    //     for (int c = start++; c < n; ++c)
+    //     {
+    //         int temp = c * n + r;
+    //         matrix2[c * n + r] = matrix2[r * n + c];
+    //         matrix2[r * n + c] = temp;
+    //     }
+    // }
+
+    // int row = blockIdx.x;
+    // int column = blockIdx.y * blockDim.y + threadIdx.x;
+
+    // __shared__ float shared_matrix2[MATRIX_SIZE * MATRIX_SIZE];
+    // __shared__ float shared_matrix1[MATRIX_SIZE * MATRIX_SIZE];
+
+    // shared_matrix1[column * n + row] = matrix1[column * n + row];
+    // shared_matrix2[column * n + row] = matrix2[column * n + row];
+
+    // // Assume num threads = n * n
+    // float sum = 0;
+    // for (int item = 0; item < n; ++item)
+    // {
+    //     sum += shared_matrix1[row * n + item] * shared_matrix2[item * n + column];
+    // }
+    // result[column * n + row] = sum;
+}
+
 int main()
 {
     // Size of matrices
-    uint64_t n = 1024;
+    uint64_t n = MATRIX_SIZE;
 
     float* m1 = new float[n * n];
     float* m2 = new float[n * n];
@@ -46,9 +93,9 @@ int main()
     float* g_m1;
     float* g_m2;
     float* g_result;
-    cudaMalloc((void**)&g_m1, n * n * sizeof(float));
-    cudaMalloc((void**)&g_m2, n * n * sizeof(float));
-    cudaMalloc((void**)&g_result, n * n * sizeof(float));
+    cudaMalloc(reinterpret_cast<void**>(&g_m1), n * n * sizeof(float));
+    cudaMalloc(reinterpret_cast<void**>(&g_m2), n * n * sizeof(float));
+    cudaMalloc(reinterpret_cast<void**>(&g_result), n * n * sizeof(float));
 
     fill_matrix(m1, n);
     fill_matrix(m2, n);
@@ -82,7 +129,10 @@ int main()
     clock_t start = clock();
 
     // has 2xnxnxn total floating-point operations
-    gpu_basic_mm<<<4, 1024>>>(g_m1, g_m2, g_result, n);
+
+    // <<<A, B>>> where A * B = N
+    gpu_basic_mm<<<32, 32>>>(g_m1, g_m2, g_result, n);
+    //gpu_better_mm<<<dim3(256, 4), 1024, 2 * n * n>>>(g_m1, g_m2, g_result, n);
     cudaThreadSynchronize();
 
     // Timer end excluding memcpy operations
@@ -110,9 +160,11 @@ int main()
     }
 
     float flops = (2 * n * n * n) / elapsed_seconds;
-    printf("Operations: %lld\n", (2 * n * n * n));
+    std::cout << "Operations: " << (2 * n * n * n) << std::endl;
+    //printf("Operations: %lld\n", (2 * n * n * n));
     printf("Seconds: %f\n", elapsed_seconds);
-    printf("FLOPS for gpu_basic_mm() at size %lld matrices = %f", n, flops);
+    std::cout << "FLOPS for gpu_basic_mm() at size " << n << " matrices = " << flops << std::endl;
+    //printf("FLOPS for gpu_basic_mm() at size %lld matrices = %f", n, flops);
 
 
     cudaFree(m1);
